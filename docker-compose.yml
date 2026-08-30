@@ -1,0 +1,95 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: securesite-db
+    environment:
+      POSTGRES_DB: securesite_audit
+      POSTGRES_USER: securesite
+      POSTGRES_PASSWORD: securesite_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U securesite -d securesite_audit"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - securesite-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: securesite-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - securesite-network
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: securesite-backend
+    environment:
+      DATABASE_URL: postgresql://securesite:securesite_password@db:5432/securesite_audit
+      JWT_SECRET_KEY: your-super-secret-jwt-key-change-this-in-production
+      JWT_ALGORITHM: HS256
+      JWT_ACCESS_TOKEN_EXPIRE_MINUTES: 30
+      JWT_REFRESH_TOKEN_EXPIRE_DAYS: 7
+      BACKEND_CORS_ORIGINS: http://localhost:3000,http://frontend:3000
+      API_V1_PREFIX: /api/v1
+      REDIS_URL: redis://redis:6379/0
+      APP_NAME: "SecureSite Audit"
+      APP_URL: http://localhost:3000
+      DEBUG: "True"
+      AUDIT_TIMEOUT_SECONDS: 120
+      MAX_CONCURRENT_AUDITS: 5
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+    networks:
+      - securesite-network
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: securesite-frontend
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000/api/v1
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
+    networks:
+      - securesite-network
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  securesite-network:
+    driver: bridge
