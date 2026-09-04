@@ -6,9 +6,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from jinja2 import Template
 
-from app.config import settings
-from app.models.audit import Audit, AuditResult, TLSResult, HeaderResult, CookieResult, RobotsResult, SecurityTxtResult, ServerInfoResult, PDFReport
-from app.models.domain import Domain
+from ..config import settings
+from ..models.audit import Audit, AuditResult, TLSResult, HeaderResult, CookieResult, RobotsResult, SecurityTxtResult, ServerInfoResult, PDFReport
+from ..models.domain import Domain
+from ..models.user import User
 
 
 class PDFReportService:
@@ -16,11 +17,11 @@ class PDFReportService:
         self.reports_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "reports")
         os.makedirs(self.reports_dir, exist_ok=True)
 
-    async def generate_report(self, db: AsyncSession, audit_id: Any) -> Optional[PDFReport]:
+    async def generate_report(self, db: AsyncSession, audit_id: Any, user_id: str) -> Optional[PDFReport]:
         """Generate a PDF report for an audit"""
         # Get audit with all related data
         result = await db.execute(
-            select(Audit).where(Audit.id == str(audit_id))
+            select(Audit).where(Audit.id == str(audit_id), Audit.user_id == user_id)
         )
         audit = result.scalar_one_or_none()
         if not audit or audit.status != "completed":
@@ -28,7 +29,7 @@ class PDFReportService:
 
         # Get domain info
         result = await db.execute(
-            select(Domain).where(Domain.id == str(audit.domain_id))
+            select(Domain).where(Domain.id == str(audit.domain_id), Domain.user_id == user_id)
         )
         domain = result.scalar_one_or_none()
         if not domain:
@@ -95,6 +96,7 @@ class PDFReportService:
 
             file_size = os.path.getsize(filepath)
             pdf_report = PDFReport(
+                user_id=user_id,
                 audit_id=str(audit_id),
                 file_path=filepath,
                 file_size=file_size,
@@ -126,6 +128,7 @@ class PDFReportService:
 
                 file_size = os.path.getsize(filepath)
                 pdf_report = PDFReport(
+                    user_id=user_id,
                     audit_id=str(audit_id),
                     file_path=filepath,
                     file_size=file_size,
@@ -135,7 +138,7 @@ class PDFReportService:
                 await db.refresh(pdf_report)
                 return pdf_report
             except Exception:
-                return await self._generate_text_report(db, str(audit_id), domain, audit, audit_results)
+                return await self._generate_text_report(db, str(audit_id), domain, audit, audit_results, user_id)
 
     def _generate_reportlab_pdf(
         self,
@@ -324,7 +327,7 @@ class PDFReportService:
 
         doc.build(elements)
 
-    async def _generate_text_report(self, db, audit_id, domain, audit, audit_results):
+    async def _generate_text_report(self, db, audit_id, domain, audit, audit_results, user_id: str):
         """Fallback text-based report generation"""
         filename = f"audit_report_{audit_id}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.txt"
         filepath = os.path.join(self.reports_dir, filename)
@@ -347,6 +350,7 @@ class PDFReportService:
 
         file_size = os.path.getsize(filepath)
         pdf_report = PDFReport(
+            user_id=user_id,
             audit_id=str(audit_id),
             file_path=filepath,
             file_size=file_size,
@@ -383,17 +387,17 @@ class PDFReportService:
             generated_at=datetime.utcnow(),
         )
 
-    async def get_report(self, db: AsyncSession, report_id: Any) -> Optional[PDFReport]:
+    async def get_report(self, db: AsyncSession, report_id: Any, user_id: str) -> Optional[PDFReport]:
         """Get a PDF report by ID"""
         result = await db.execute(
-            select(PDFReport).where(PDFReport.id == str(report_id))
+            select(PDFReport).where(PDFReport.id == str(report_id), PDFReport.user_id == user_id)
         )
         return result.scalar_one_or_none()
 
-    async def get_all_reports(self, db: AsyncSession):
+    async def get_all_reports(self, db: AsyncSession, user_id: str):
         """Get all PDF reports"""
         result = await db.execute(
-            select(PDFReport).order_by(PDFReport.created_at.desc())
+            select(PDFReport).where(PDFReport.user_id == user_id).order_by(PDFReport.created_at.desc())
         )
         return result.scalars().all()
 

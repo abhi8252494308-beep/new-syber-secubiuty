@@ -1,0 +1,23 @@
+{
+  "total_audits": 25,
+  "risk_distribution": [
+    {"_id": 0, "count": 5},
+    {"_id": 10, "count": 8},
+    {"_id": 20, "count": 6},
+    {"_id": 30, "count": 3},
+    {"_id": 40, "count": 2},
+    {"_id": 50, "count": 1}
+  ],
+  "average_scores": {
+    "avg_risk": 25.5,
+    "avg_score": 72.3,
+    "min_risk": 0,
+    "max_risk": 85
+  },
+  "top_vulnerabilities": [
+    {"_id": "Missing CSP Header", "count": 12},
+    {"_id": "Missing X-Frame-Options", "count": 10},
+    {"_id": "SSL Certificate Expiring Soon", "count": 5},
+    {"_id": "Missing DMARC Record", "count": 4}
+  ]
+}

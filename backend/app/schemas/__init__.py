@@ -1,5 +1,10 @@
-from app.schemas.domain import DomainCreate, DomainResponse, DomainVerificationResponse
-from app.schemas.audit import AuditCreate, AuditResponse, AuditResultResponse, AuditSummary
+from .domain import DomainCreate, DomainResponse, DomainVerificationResponse
+from .audit import (
+    AuditCreate, AuditResponse, AuditResultResponse, AuditSummary,
+    TLSResultResponse, HeaderResultResponse, CookieResultResponse,
+    RobotsResultResponse, SecurityTxtResultResponse, ServerInfoResultResponse,
+    SSLabsResultResponse, DNSResultResponse, CORSResultResponse, ClickjackingResultResponse
+)
 
 __all__ = [
     "DomainCreate",
@@ -9,4 +14,14 @@ __all__ = [
     "AuditResponse",
     "AuditResultResponse",
     "AuditSummary",
+    "TLSResultResponse",
+    "HeaderResultResponse",
+    "CookieResultResponse",
+    "RobotsResultResponse",
+    "SecurityTxtResultResponse",
+    "ServerInfoResultResponse",
+    "SSLabsResultResponse",
+    "DNSResultResponse",
+    "CORSResultResponse",
+    "ClickjackingResultResponse",
 ]

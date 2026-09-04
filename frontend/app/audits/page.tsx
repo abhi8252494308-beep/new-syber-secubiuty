@@ -1,11 +1,9 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { FileText, Loader2, RefreshCw, Download } from 'lucide-react';
 import api from '@/lib/api';
-import { isAuthenticated } from '@/lib/auth';
 
 interface AuditSummary {
   id: string;
@@ -18,16 +16,11 @@ interface AuditSummary {
 }
 
 export default function AuditsPage() {
-  const router = useRouter();
   const [audits, setAudits] = useState<AuditSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<string>('all');
 
   useEffect(() => {
-    if (!isAuthenticated()) {
-      router.push('/auth/login');
-      return;
-    }
     fetchAudits();
   }, []);
 

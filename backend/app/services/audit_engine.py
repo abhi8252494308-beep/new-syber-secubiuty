@@ -9,12 +9,15 @@ from urllib.parse import urlparse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from app.config import settings
-from app.models.audit import (
+from ..config import settings
+from ..models.audit import (
     Audit, AuditResult, TLSResult, HeaderResult, CookieResult,
-    RobotsResult, SecurityTxtResult, ServerInfoResult
+    RobotsResult, SecurityTxtResult, ServerInfoResult,
+    SSLabsResult, DNSResult, CORSResult, ClickjackingResult
 )
-from app.models.domain import Domain
+from ..models.domain import Domain
+from ..services.security_checks import SecurityScanner
+from ..services.mongodb_service import get_mongodb_service
 
 
 class AuditEngine:
@@ -67,6 +70,12 @@ class AuditEngine:
             await self._check_robots_txt(db, audit, domain.domain_name)
             await self._check_security_txt(db, audit, domain.domain_name)
             await self._check_server_info(db, audit, domain.domain_name)
+            
+            # Run extended security checks
+            await self._check_sslabs(db, audit, domain.domain_name)
+            await self._check_dns_security(db, audit, domain.domain_name)
+            await self._check_cors(db, audit, domain.domain_name)
+            await self._check_clickjacking(db, audit, domain.domain_name)
 
             # Calculate overall score
             overall_score = 0
@@ -80,12 +89,19 @@ class AuditEngine:
             # Update domain's last audit time
             domain.last_audit_at = datetime.utcnow()
 
-            # Save all results
+            # Save all results to SQL
             for result in self.results:
                 db.add(result)
 
             await db.commit()
             await db.refresh(audit)
+            
+            # Save to MongoDB
+            try:
+                mongodb = await get_mongodb_service()
+                await self._save_to_mongodb(mongodb, audit, domain.domain_name, overall_score)
+            except Exception as e:
+                print(f"Failed to save to MongoDB: {e}")
 
         except Exception as e:
             audit.status = "failed"
@@ -94,6 +110,75 @@ class AuditEngine:
             await db.commit()
 
         return audit
+
+    async def _save_to_mongodb(self, mongodb, audit: Audit, domain_name: str, overall_score: int):
+        """Save audit results to MongoDB"""
+        # Build result document
+        result_doc = {
+            "audit_id": audit.id,
+            "domain": domain_name,
+            "status": audit.status,
+            "overall_score": overall_score,
+            "risk_score": getattr(audit, 'risk_score', 0),
+            "started_at": audit.started_at,
+            "completed_at": audit.completed_at,
+            "created_at": audit.created_at,
+            "updated_at": audit.updated_at,
+        }
+        
+        # Add individual check results
+        for result in self.results:
+            result_doc[f"{result.check_category}_result"] = {
+                "check_name": result.check_name,
+                "status": result.status,
+                "score": result.score,
+                "max_score": result.max_score,
+                "details": result.details,
+                "recommendations": result.recommendations,
+            }
+        
+        # Add extended results if available
+        if audit.sslabs_result:
+            result_doc["sslabs"] = {
+                "grade": audit.sslabs_result.grade,
+                "vulnerabilities": audit.sslabs_result.vulnerabilities,
+                "protocols": audit.sslabs_result.protocols,
+                "cipher_strength": audit.sslabs_result.cipher_strength,
+            }
+        
+        if audit.dns_result:
+            result_doc["dns_security"] = {
+                "spf_record": audit.dns_result.spf_record,
+                "spf_valid": audit.dns_result.spf_valid,
+                "spf_mechanisms": audit.dns_result.spf_mechanisms,
+                "dkim_records": audit.dns_result.dkim_records,
+                "dkim_count": audit.dns_result.dkim_count,
+                "dmarc_record": audit.dns_result.dmarc_record,
+                "dmarc_policy": audit.dns_result.dmarc_policy,
+                "dmarc_valid": audit.dns_result.dmarc_valid,
+            }
+        
+        if audit.cors_result:
+            result_doc["cors"] = {
+                "wildcard_origin": audit.cors_result.wildcard_origin,
+                "allows_credentials": audit.cors_result.allows_credentials,
+                "allowed_methods": audit.cors_result.allowed_methods,
+                "allowed_headers": audit.cors_result.allowed_headers,
+                "exposed_headers": audit.cors_result.exposed_headers,
+                "max_age": audit.cors_result.max_age,
+                "issues": audit.cors_result.issues,
+            }
+        
+        if audit.clickjacking_result:
+            result_doc["clickjacking"] = {
+                "vulnerable": audit.clickjacking_result.vulnerable,
+                "x_frame_options": audit.clickjacking_result.x_frame_options,
+                "csp_frame_ancestors": audit.clickjacking_result.csp_frame_ancestors,
+                "content_security_policy": audit.clickjacking_result.content_security_policy,
+                "details": audit.clickjacking_result.details,
+            }
+        
+        await mongodb.save_audit_result(result_doc)
 
     async def _check_https_tls(self, db: AsyncSession, audit: Audit, domain: str):
         """Check HTTPS/TLS configuration"""
@@ -108,7 +193,8 @@ class AuditEngine:
                     response = await client.get(f"https://{domain}")
                     tls_result.has_https = True
                     score += 10
-                except Exception:
+                except Exception as e:
+                    print(f"HTTPS check error: {e}")
                     tls_result.has_https = False
 
             max_score += 10
@@ -151,6 +237,7 @@ class AuditEngine:
                         tls_result.certificate_san = [x[1] for x in san] if san else []
 
             except Exception as e:
+                print(f"SSL certificate check error: {e}")
                 tls_result.certificate_valid = False
 
             # Check HSTS
@@ -181,11 +268,11 @@ class AuditEngine:
                         if tls_result.hsts_preload:
                             score += 5
                         max_score += 20
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"HSTS check error: {e}")
 
         except Exception as e:
-            pass
+            print(f"TLS check error: {e}")
 
         db.add(tls_result)
 
@@ -277,8 +364,8 @@ class AuditEngine:
                     score += 5
                 max_score += 5
 
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"Security headers check error: {e}")
 
         db.add(header_result)
 
@@ -305,24 +392,28 @@ class AuditEngine:
                 response = await client.get(f"https://{domain}")
                 cookies = response.cookies
 
+                # Get all Set-Cookie headers (httpx returns them as a list)
+                set_cookie_headers = response.headers.get_list("set-cookie")
+
                 for cookie_name, cookie_value in cookies.items():
                     cookie_result = CookieResult(
                         audit_id=audit.id,
                         cookie_name=cookie_name,
                     )
 
-                    # Check cookie attributes from Set-Cookie header
-                    set_cookie = response.headers.get("set-cookie", "")
-                    if set_cookie:
-                        cookie_lower = set_cookie.lower()
-                        cookie_result.has_secure_flag = "secure" in cookie_lower
-                        cookie_result.has_httponly_flag = "httponly" in cookie_lower
-                        cookie_result.has_samesite_flag = "samesite" in cookie_lower
+                    # Check cookie attributes from Set-Cookie headers
+                    for set_cookie in set_cookie_headers:
+                        if cookie_name in set_cookie:
+                            cookie_lower = set_cookie.lower()
+                            cookie_result.has_secure_flag = "secure" in cookie_lower
+                            cookie_result.has_httponly_flag = "httponly" in cookie_lower
+                            cookie_result.has_samesite_flag = "samesite" in cookie_lower
 
-                        if "samesite=strict" in cookie_lower:
-                            cookie_result.samesite_value = "Strict"
-                        elif "samesite=lax" in cookie_lower:
-                            cookie_result.samesite_value = "Lax"
+                            if "samesite=strict" in cookie_lower:
+                                cookie_result.samesite_value = "Strict"
+                            elif "samesite=lax" in cookie_lower:
+                                cookie_result.samesite_value = "Lax"
+                            break
 
                     cookie_score = 0
                     cookie_max = 3
@@ -340,8 +431,8 @@ class AuditEngine:
                     cookie_results.append(cookie_result)
                     db.add(cookie_result)
 
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"Cookie check error: {e}")
 
         if not cookie_results:
             # No cookies found - add a placeholder result
@@ -392,8 +483,8 @@ class AuditEngine:
                     if robots_result.has_security_txt_reference:
                         score += 2
 
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"robots.txt check error: {e}")
 
         db.add(robots_result)
 
@@ -462,8 +553,8 @@ class AuditEngine:
                     if policy_urls:
                         score += 1
 
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"security.txt check error: {e}")
 
         db.add(security_txt_result)
 
@@ -528,11 +619,11 @@ class AuditEngine:
                     answers = dns.resolver.resolve(domain, "A")
                     if answers:
                         server_info_result.ip_address = str(answers[0])
-                except Exception:
-                    pass
+                except Exception as e:
+                    print(f"DNS resolution error: {e}")
 
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"Server info check error: {e}")
 
         db.add(server_info_result)
 
@@ -625,4 +716,235 @@ class AuditEngine:
             recs.append("Remove version information from Server header")
         if server_info_result.x_powered_by:
             recs.append("Remove X-Powered-By header to hide technology information")
+        return recs
+
+    async def _check_sslabs(self, db: AsyncSession, audit: Audit, domain: str):
+        """Run SSL Labs comprehensive analysis"""
+        sslabs_result = SSLabsResult(audit_id=audit.id)
+        score = 0
+        max_score = 100
+        
+        try:
+            scanner = SecurityScanner()
+            result = await scanner._run_sslabs(domain)
+            
+            if "error" not in result:
+                sslabs_result.grade = result.get("grade", "F")
+                sslabs_result.vulnerabilities = result.get("vulnerabilities", [])
+                sslabs_result.protocols = result.get("protocols", {})
+                sslabs_result.cipher_strength = result.get("cipher_strength", {})
+                
+                # Score based on grade
+                grade_scores = {"A+": 100, "A": 95, "A-": 90, "B": 70, "C": 50, "D": 30, "E": 20, "F": 0}
+                score = grade_scores.get(result.get("grade", "F"), 0)
+                
+                # Deduct for vulnerabilities
+                vulns = result.get("vulnerabilities", [])
+                critical_vulns = [v for v in vulns if v.get("severity") == "CRITICAL"]
+                high_vulns = [v for v in vulns if v.get("severity") == "HIGH"]
+                score -= len(critical_vulns) * 15
+                score -= len(high_vulns) * 10
+                score = max(score, 0)
+            
+            await scanner.close()
+        
+        except Exception as e:
+            print(f"SSL Labs check error: {e}")
+        
+        db.add(sslabs_result)
+        
+        self._add_result(
+            audit.id, "sslabs", "SSL Labs Analysis",
+            "pass" if score >= 70 else "fail",
+            score, max_score,
+            {
+                "grade": sslabs_result.grade,
+                "vulnerability_count": len(sslabs_result.vulnerabilities) if sslabs_result.vulnerabilities else 0,
+                "protocols": sslabs_result.protocols,
+                "cipher_strength": sslabs_result.cipher_strength,
+            },
+            self._get_sslabs_recommendations(sslabs_result),
+        )
+
+    async def _check_dns_security(self, db: AsyncSession, audit: Audit, domain: str):
+        """Run DNS security checks (SPF, DKIM, DMARC)"""
+        dns_result = DNSResult(audit_id=audit.id)
+        score = 0
+        max_score = 100
+        
+        try:
+            scanner = SecurityScanner()
+            result = await scanner._run_dns_checks(domain)
+            
+            if "error" not in result:
+                dns_result.spf_record = result.get("spf", {}).get("record")
+                dns_result.spf_valid = result.get("spf", {}).get("valid", False)
+                dns_result.spf_mechanisms = result.get("spf", {}).get("mechanisms", [])
+                
+                dns_result.dkim_records = result.get("dkim", {}).get("records", [])
+                dns_result.dkim_count = result.get("dkim", {}).get("count", 0)
+                
+                dns_result.dmarc_record = result.get("dmarc", {}).get("record")
+                dns_result.dmarc_policy = result.get("dmarc", {}).get("policy", "none")
+                dns_result.dmarc_valid = result.get("dmarc", {}).get("valid", False)
+                
+                score = result.get("overall_score", 0)
+            
+            await scanner.close()
+        
+        except Exception as e:
+            print(f"DNS security check error: {e}")
+        
+        db.add(dns_result)
+        
+        self._add_result(
+            audit.id, "dns", "DNS Security (SPF/DKIM/DMARC)",
+            "pass" if score >= 70 else "fail",
+            score, max_score,
+            {
+                "spf_exists": dns_result.spf_record is not None,
+                "spf_valid": dns_result.spf_valid,
+                "dkim_count": dns_result.dkim_count,
+                "dmarc_policy": dns_result.dmarc_policy,
+                "dmarc_valid": dns_result.dmarc_valid,
+            },
+            self._get_dns_recommendations(dns_result),
+        )
+
+    async def _check_cors(self, db: AsyncSession, audit: Audit, domain: str):
+        """Run CORS configuration analysis"""
+        cors_result = CORSResult(audit_id=audit.id)
+        score = 100
+        max_score = 100
+        
+        try:
+            scanner = SecurityScanner()
+            result = await scanner._run_cors_checks(domain)
+            
+            if "error" not in result:
+                cors_result.wildcard_origin = result.get("wildcard_origin", False)
+                cors_result.allows_credentials = result.get("allows_credentials", False)
+                cors_result.allowed_methods = result.get("allowed_methods", [])
+                cors_result.allowed_headers = result.get("allowed_headers", [])
+                cors_result.exposed_headers = result.get("exposed_headers", [])
+                cors_result.max_age = result.get("max_age")
+                cors_result.issues = result.get("issues", [])
+                
+                # Deduct for issues
+                score -= len(result.get("issues", [])) * 15
+                score = max(score, 0)
+            
+            await scanner.close()
+        
+        except Exception as e:
+            print(f"CORS check error: {e}")
+        
+        db.add(cors_result)
+        
+        self._add_result(
+            audit.id, "cors", "CORS Configuration",
+            "pass" if score >= 70 else "fail",
+            score, max_score,
+            {
+                "wildcard_origin": cors_result.wildcard_origin,
+                "allows_credentials": cors_result.allows_credentials,
+                "allowed_methods": cors_result.allowed_methods,
+                "issues": cors_result.issues,
+            },
+            self._get_cors_recommendations(cors_result),
+        )
+
+    async def _check_clickjacking(self, db: AsyncSession, audit: Audit, domain: str):
+        """Run clickjacking detection"""
+        cj_result = ClickjackingResult(audit_id=audit.id)
+        score = 0
+        max_score = 10
+        
+        try:
+            scanner = SecurityScanner()
+            result = await scanner._run_clickjacking_check(domain)
+            
+            if "error" not in result:
+                cj_result.vulnerable = result.get("vulnerable", True)
+                cj_result.x_frame_options = result.get("x_frame_options")
+                cj_result.csp_frame_ancestors = result.get("csp_frame_ancestors")
+                cj_result.content_security_policy = result.get("content_security_policy")
+                cj_result.details = result.get("details", [])
+                
+                score = 10 if not result.get("vulnerable", True) else 0
+            
+            await scanner.close()
+        
+        except Exception as e:
+            print(f"Clickjacking check error: {e}")
+        
+        db.add(cj_result)
+        
+        self._add_result(
+            audit.id, "clickjacking", "Clickjacking Protection",
+            "pass" if score >= 7 else "fail",
+            score, max_score,
+            {
+                "vulnerable": cj_result.vulnerable,
+                "x_frame_options": cj_result.x_frame_options,
+                "csp_frame_ancestors": cj_result.csp_frame_ancestors,
+            },
+            self._get_clickjacking_recommendations(cj_result),
+        )
+
+    def _get_sslabs_recommendations(self, sslabs_result: SSLabsResult) -> List[str]:
+        recs = []
+        grade = sslabs_result.grade or "F"
+        if grade in ["F", "E", "D"]:
+            recs.append(f"SSL grade is {grade} - immediate attention required")
+        elif grade in ["C", "B"]:
+            recs.append(f"SSL grade is {grade} - improvements recommended")
+        
+        for vuln in sslabs_result.vulnerabilities or []:
+            if vuln.get("severity") in ["CRITICAL", "HIGH"]:
+                recs.append(f"Address {vuln.get('name')}: {vuln.get('details')}")
+        
+        if sslabs_result.protocols:
+            old_protocols = [p for p in sslabs_result.protocols if p in ["SSLv2", "SSLv3", "TLSv1", "TLSv1.1"]]
+            if old_protocols:
+                recs.append(f"Disable deprecated protocols: {', '.join(old_protocols)}")
+        
+        return recs
+
+    def _get_dns_recommendations(self, dns_result: DNSResult) -> List[str]:
+        recs = []
+        if not dns_result.spf_record:
+            recs.append("Add SPF record to prevent email spoofing")
+        elif not dns_result.spf_valid:
+            recs.append("Fix SPF record - missing 'all' mechanism")
+        
+        if dns_result.dkim_count == 0:
+            recs.append("Add DKIM records for email signing")
+        
+        if not dns_result.dmarc_record:
+            recs.append("Add DMARC record for email authentication policy")
+        elif dns_result.dmarc_policy == "none":
+            recs.append("Set DMARC policy to 'quarantine' or 'reject' for better protection")
+        elif not dns_result.dmarc_valid:
+            recs.append("Fix DMARC record configuration")
+        
+        return recs
+
+    def _get_cors_recommendations(self, cors_result: CORSResult) -> List[str]:
+        recs = []
+        for issue in cors_result.issues or []:
+            recs.append(issue)
+        if not cors_result.issues:
+            recs.append("CORS configuration appears secure")
+        return recs
+
+    def _get_clickjacking_recommendations(self, cj_result: ClickjackingResult) -> List[str]:
+        recs = []
+        if cj_result.vulnerable:
+            if not cj_result.x_frame_options:
+                recs.append("Add X-Frame-Options header (DENY or SAMEORIGIN)")
+            if not cj_result.csp_frame_ancestors:
+                recs.append("Add Content-Security-Policy with frame-ancestors directive")
+        else:
+            recs.append("Clickjacking protection is properly configured")
         return recs

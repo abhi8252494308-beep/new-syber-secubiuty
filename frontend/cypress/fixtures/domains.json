@@ -1,0 +1,24 @@
+[
+  {
+    "domain_name": "example.com",
+    "id": "12345678-1234-1234-1234-123456789012",
+    "is_verified": true,
+    "verification_method": "dns",
+    "verification_token": null,
+    "is_active": true,
+    "last_audit_at": "2026-01-15T10:00:00",
+    "created_at": "2026-01-01T00:00:00",
+    "updated_at": "2026-01-15T10:00:00"
+  },
+  {
+    "domain_name": "test.com",
+    "id": "87654321-4321-4321-4321-210987654321",
+    "is_verified": false,
+    "verification_method": "dns",
+    "verification_token": "test-token-123",
+    "is_active": true,
+    "last_audit_at": null,
+    "created_at": "2026-01-10T00:00:00",
+    "updated_at": "2026-01-10T00:00:00"
+  }
+]

@@ -109,6 +109,54 @@ class ServerInfoResultResponse(BaseModel):
         from_attributes = True
 
 
+class SSLabsResultResponse(BaseModel):
+    grade: Optional[str] = None
+    vulnerabilities: Optional[List[Dict[str, Any]]] = None
+    protocols: Optional[Dict[str, Any]] = None
+    cipher_strength: Optional[Dict[str, Any]] = None
+
+    class Config:
+        from_attributes = True
+
+
+class DNSResultResponse(BaseModel):
+    spf_record: Optional[str] = None
+    spf_valid: bool
+    spf_mechanisms: Optional[List[str]] = None
+    dkim_records: Optional[List[Dict[str, Any]]] = None
+    dkim_count: int
+    dmarc_record: Optional[str] = None
+    dmarc_policy: Optional[str] = None
+    dmarc_valid: bool
+
+    class Config:
+        from_attributes = True
+
+
+class CORSResultResponse(BaseModel):
+    wildcard_origin: bool
+    allows_credentials: bool
+    allowed_methods: Optional[List[str]] = None
+    allowed_headers: Optional[List[str]] = None
+    exposed_headers: Optional[List[str]] = None
+    max_age: Optional[int] = None
+    issues: Optional[List[str]] = None
+
+    class Config:
+        from_attributes = True
+
+
+class ClickjackingResultResponse(BaseModel):
+    vulnerable: bool
+    x_frame_options: Optional[str] = None
+    csp_frame_ancestors: Optional[str] = None
+    content_security_policy: Optional[str] = None
+    details: Optional[List[str]] = None
+
+    class Config:
+        from_attributes = True
+
+
 class AuditResponse(BaseModel):
     id: UUID
     domain_id: UUID
@@ -127,6 +175,10 @@ class AuditResponse(BaseModel):
     robots_result: Optional[RobotsResultResponse] = None
     security_txt_result: Optional[SecurityTxtResultResponse] = None
     server_info_result: Optional[ServerInfoResultResponse] = None
+    sslabs_result: Optional[SSLabsResultResponse] = None
+    dns_result: Optional[DNSResultResponse] = None
+    cors_result: Optional[CORSResultResponse] = None
+    clickjacking_result: Optional[ClickjackingResultResponse] = None
 
     class Config:
         from_attributes = True

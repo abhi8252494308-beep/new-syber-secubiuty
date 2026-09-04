@@ -1,11 +1,9 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Globe, Shield, FileText, TrendingUp, Plus, Loader2 } from 'lucide-react';
 import api from '@/lib/api';
-import { isAuthenticated } from '@/lib/auth';
 
 interface DashboardStats {
   totalDomains: number;
@@ -23,7 +21,6 @@ interface RecentAudit {
 }
 
 export default function DashboardPage() {
-  const router = useRouter();
   const [stats, setStats] = useState<DashboardStats>({
     totalDomains: 0,
     verifiedDomains: 0,
@@ -34,10 +31,6 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!isAuthenticated()) {
-      router.push('/auth/login');
-      return;
-    }
     fetchDashboardData();
   }, []);
 

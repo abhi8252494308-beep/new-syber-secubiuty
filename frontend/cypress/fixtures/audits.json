@@ -1,0 +1,29 @@
+[
+  {
+    "id": "11111111-1111-1111-1111-111111111111",
+    "domain_id": "12345678-1234-1234-1234-123456789012",
+    "domain_name": "example.com",
+    "status": "completed",
+    "overall_score": 85,
+    "created_at": "2026-01-15T10:30:00",
+    "completed_at": "2026-01-15T10:35:00"
+  },
+  {
+    "id": "22222222-2222-2222-2222-222222222222",
+    "domain_id": "87654321-4321-4321-4321-210987654321",
+    "domain_name": "test.com",
+    "status": "running",
+    "overall_score": null,
+    "created_at": "2026-01-16T09:00:00",
+    "completed_at": null
+  },
+  {
+    "id": "33333333-3333-3333-3333-333333333333",
+    "domain_id": "12345678-1234-1234-1234-123456789012",
+    "domain_name": "example.com",
+    "status": "completed",
+    "overall_score": 72,
+    "created_at": "2026-01-10T14:00:00",
+    "completed_at": "2026-01-10T14:05:00"
+  }
+]

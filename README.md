@@ -6,22 +6,31 @@ A comprehensive defensive security audit platform for websites. Perform safe, no
 
 - **Domain Verification**: Verify domain ownership via DNS TXT record, file upload, or meta tag
 - **HTTPS/TLS Analysis**: Check SSL certificate validity, TLS version, cipher suites, and HSTS configuration
+- **SSL Labs Integration**: Comprehensive SSL/TLS analysis via Qualys SSL Labs API
 - **Security Headers**: Verify Content Security Policy, X-Frame-Options, X-Content-Type-Options, and more
 - **Cookie Security**: Analyze cookie attributes including Secure, HttpOnly, and SameSite flags
 - **robots.txt & security.txt**: Check for presence and proper configuration
 - **Server Information**: Detect publicly exposed server information and technology stack
+- **DNS Security**: SPF, DKIM, and DMARC record validation
+- **CORS Analysis**: Cross-Origin Resource Sharing configuration review
+- **Clickjacking Detection**: X-Frame-Options and CSP frame-ancestors verification
 - **PDF Reports**: Generate comprehensive PDF reports with findings and recommendations
 - **Security Scoring**: Get an overall security score with actionable recommendations
+- **Advanced Dashboard**: D3.js visualizations for risk distribution, score gauges, and vulnerability trends
+- **MongoDB Storage**: Persistent audit results with querying capabilities
+- **Comprehensive Testing**: Pytest backend tests and Cypress E2E frontend tests
 
 ## Tech Stack
 
-- **Frontend**: Next.js 14, TypeScript, Tailwind CSS
-- **Backend**: FastAPI (Python), SQLAlchemy, Pydantic
-- **Database**: PostgreSQL
+- **Frontend**: Next.js 14, TypeScript, Tailwind CSS, D3.js, Cypress
+- **Backend**: FastAPI (Python), SQLAlchemy, Pydantic, Motor (MongoDB)
+- **Database**: PostgreSQL (primary), MongoDB (analytics)
 - **Authentication**: JWT (JSON Web Tokens)
 - **Caching**: Redis
 - **PDF Generation**: WeasyPrint
-- **Deployment**: Docker, Docker Compose
+- **External APIs**: Qualys SSL Labs API
+- **Testing**: Pytest (backend), Cypress (frontend E2E)
+- **Deployment**: Docker, Docker Compose, Heroku, AWS Elastic Beanstalk
 
 ## Project Structure
 
@@ -172,6 +181,27 @@ Add a meta tag to your website's HTML `<head>`:
 <meta name="securesite-audit-verification" content="<verification-token>">
 ```
 
+## Testing
+
+### Backend Tests (Pytest)
+```bash
+cd backend
+pip install -r requirements-test.txt
+pytest tests/ -v --cov=app --cov-report=html
+```
+
+### Frontend Tests (Cypress)
+```bash
+cd frontend
+npm run cypress:open   # Interactive mode
+npm run cypress:run    # Headless CI mode
+```
+
+### Test Coverage
+- Backend: 22 tests covering endpoints, models, schemas, and security checks
+- Frontend: E2E tests for dashboard, domains, audits pages
+- CI/CD ready for GitHub Actions/GitLab CI
+
 ## API Endpoints
 
 ### Authentication
@@ -200,6 +230,15 @@ Add a meta tag to your website's HTML `<head>`:
 - `GET /api/v1/reports` - List user's reports
 - `DELETE /api/v1/reports/{report_id}` - Delete a report
 
+### MongoDB Analytics
+- `GET /api/v1/mongodb/statistics` - Get overall audit statistics
+- `GET /api/v1/mongodb/audits/recent` - Get recent audit results
+- `GET /api/v1/mongodb/audits/by-risk-score` - Filter audits by risk score
+- `GET /api/v1/mongodb/audits/domain/{domain}` - Get audits for a domain
+- `GET /api/v1/mongodb/audits/{audit_id}` - Get specific audit from MongoDB
+- `GET /api/v1/mongodb/domains` - Get all domains
+- `GET /api/v1/mongodb/domains/{domain}` - Get specific domain
+
 ## Security Checks Performed
 
 ### HTTPS/TLS Configuration
@@ -210,6 +249,13 @@ Add a meta tag to your website's HTML `<head>`:
 - Certificate issuer and subject
 - Subject Alternative Names (SAN)
 - HSTS (HTTP Strict Transport Security) configuration
+
+### SSL Labs Analysis (via Qualys SSL Labs API)
+- Comprehensive SSL/TLS grade (A+ through F)
+- Supported protocols (SSLv2, SSLv3, TLS 1.0-1.3)
+- Cipher suite strength analysis
+- Known vulnerability detection (POODLE, BEAST, HEARTBLEED, etc.)
+- Certificate chain validation
 
 ### Security Headers
 - Content Security Policy (CSP)
@@ -244,6 +290,23 @@ Add a meta tag to your website's HTML `<head>`:
 - X-Powered-By header
 - Technology stack detection
 - IP address resolution
+
+### DNS Security
+- SPF (Sender Policy Framework) record validation
+- DKIM (DomainKeys Identified Mail) record check
+- DMARC (Domain-based Message Authentication) policy review
+- Overall DNS security scoring
+
+### CORS Configuration
+- Wildcard origin detection
+- Credentials with wildcard origin check
+- Allowed methods and headers review
+- Exposed headers analysis
+
+### Clickjacking Protection
+- X-Frame-Options header verification
+- CSP frame-ancestors directive check
+- Vulnerability assessment
 
 ## Deployment
 

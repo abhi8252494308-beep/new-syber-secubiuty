@@ -8,6 +8,10 @@ class Settings(BaseSettings):
     # Database (SQLite for local development)
     DATABASE_URL: str = "sqlite+aiosqlite:///./securesite_audit.db"
     
+    # MongoDB
+    MONGODB_URI: str = "mongodb://localhost:27017"
+    MONGODB_DB_NAME: str = "securesite_audit"
+    
     # JWT
     JWT_SECRET_KEY: str = "your-super-secret-jwt-key-change-this-in-production"
     JWT_ALGORITHM: str = "HS256"
@@ -55,6 +59,7 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         case_sensitive = True
+        extra = "allow"
 
 
 settings = Settings()

@@ -1,7 +1,13 @@
-from app.models.domain import Domain
-from app.models.audit import Audit, AuditResult, TLSResult, HeaderResult, CookieResult, RobotsResult, SecurityTxtResult, ServerInfoResult, PDFReport
+from .user import User
+from .domain import Domain
+from .audit import (
+    Audit, AuditResult, TLSResult, HeaderResult, CookieResult,
+    RobotsResult, SecurityTxtResult, ServerInfoResult,
+    SSLabsResult, DNSResult, CORSResult, ClickjackingResult, PDFReport
+)
 
 __all__ = [
+    "User",
     "Domain",
     "Audit",
     "AuditResult",
@@ -11,5 +17,9 @@ __all__ = [
     "RobotsResult",
     "SecurityTxtResult",
     "ServerInfoResult",
+    "SSLabsResult",
+    "DNSResult",
+    "CORSResult",
+    "ClickjackingResult",
     "PDFReport",
 ]

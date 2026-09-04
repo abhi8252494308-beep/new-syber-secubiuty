@@ -6,13 +6,38 @@ from typing import List
 from uuid import UUID
 import os
 
-from app.database import get_db
-from app.services.pdf_report import PDFReportService
-from app.models.audit import PDFReport, Audit
-from app.models.domain import Domain
+from ..database import get_db
+from ..services.pdf_report import PDFReportService
+from ..models.audit import PDFReport, Audit
+from ..models.domain import Domain
+from ..models.user import User
+
 
 router = APIRouter()
 pdf_service = PDFReportService()
+
+
+async def _get_default_user_id(db: AsyncSession) -> str:
+    """Get the default user ID for no-auth mode"""
+    result = await db.execute(
+        select(User.id).where(User.email == "default@securesite-audit.local")
+    )
+    user_id = result.scalar_one_or_none()
+    if not user_id:
+        # Pre-computed bcrypt hash for "default123"
+        DEFAULT_PASSWORD_HASH = "$2b$12$Wx6iC9nsN8ifjX7DU4XfNek/qK69aod20W634VcKnwT93is9PP.bq"
+        default_user = User(
+            email="default@securesite-audit.local",
+            hashed_password=DEFAULT_PASSWORD_HASH,
+            full_name="Default User",
+            is_active=True,
+            is_verified=True,
+        )
+        db.add(default_user)
+        await db.commit()
+        await db.refresh(default_user)
+        return default_user.id
+    return user_id
 
 
 @router.post("/generate/{audit_id}")
@@ -21,9 +46,10 @@ async def generate_report(
     db: AsyncSession = Depends(get_db),
 ):
     """Generate a PDF report for an audit"""
-    # Verify audit exists
+    user_id = await _get_default_user_id(db)
+    # Verify audit exists and belongs to user
     result = await db.execute(
-        select(Audit).where(Audit.id == str(audit_id))
+        select(Audit).where(Audit.id == str(audit_id), Audit.user_id == user_id)
     )
     audit = result.scalar_one_or_none()
     if not audit:
@@ -39,7 +65,7 @@ async def generate_report(
         )
 
     # Generate report
-    pdf_report = await pdf_service.generate_report(db, str(audit_id))
+    pdf_report = await pdf_service.generate_report(db, str(audit_id), user_id)
     if not pdf_report:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -91,14 +117,15 @@ async def list_reports(
     db: AsyncSession = Depends(get_db),
 ):
     """List all PDF reports"""
-    reports = await pdf_service.get_all_reports(db)
+    user_id = await _get_default_user_id(db)
+    reports = await pdf_service.get_all_reports(db, user_id)
     result_list = []
     for r in reports:
-        audit_res = await db.execute(select(Audit).where(Audit.id == str(r.audit_id)))
+        audit_res = await db.execute(select(Audit).where(Audit.id == str(r.audit_id), Audit.user_id == user_id))
         audit = audit_res.scalar_one_or_none()
         domain_name = "Unknown"
         if audit:
-            domain_res = await db.execute(select(Domain).where(Domain.id == str(audit.domain_id)))
+            domain_res = await db.execute(select(Domain).where(Domain.id == str(audit.domain_id), Domain.user_id == user_id))
             domain = domain_res.scalar_one_or_none()
             if domain:
                 domain_name = domain.domain_name
@@ -119,7 +146,8 @@ async def delete_report(
     db: AsyncSession = Depends(get_db),
 ):
     """Delete a PDF report"""
-    pdf_report = await pdf_service.get_report(db, str(report_id))
+    user_id = await _get_default_user_id(db)
+    pdf_report = await pdf_service.get_report(db, str(report_id), user_id)
     if not pdf_report:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

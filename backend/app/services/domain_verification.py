@@ -7,14 +7,40 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from fastapi import HTTPException, status
 
-from app.config import settings
-from app.models.domain import Domain
+from ..config import settings
+from ..models.domain import Domain
+from ..models.user import User
 
 
 class DomainVerificationService:
     @staticmethod
     def generate_verification_token() -> str:
         return secrets.token_urlsafe(32)
+
+    @staticmethod
+    async def _get_default_user_id(db: AsyncSession) -> str:
+        """Get the default user ID for no-auth mode"""
+        result = await db.execute(
+            select(User.id).where(User.email == "default@securesite-audit.local")
+        )
+        user_id = result.scalar_one_or_none()
+        if not user_id:
+            # Create default user if it doesn't exist
+            # Pre-computed bcrypt hash for "default123"
+            DEFAULT_PASSWORD_HASH = "$2b$12$Wx6iC9nsN8ifjX7DU4XfNek/qK69aod20W634VcKnwT93is9PP.bq"
+            default_user = User(
+                id=str(UUID(int=0)),  # placeholder, will be overridden
+                email="default@securesite-audit.local",
+                hashed_password=DEFAULT_PASSWORD_HASH,
+                full_name="Default User",
+                is_active=True,
+                is_verified=True,
+            )
+            db.add(default_user)
+            await db.commit()
+            await db.refresh(default_user)
+            return default_user.id
+        return user_id
 
     @staticmethod
     async def create_domain(
@@ -30,10 +56,12 @@ class DomainVerificationService:
             domain_name = domain_name[4:]
         domain_name = domain_name.rstrip("/")
 
-        # Check if domain already exists
+        # Check if domain already exists for this user
+        user_id = await DomainVerificationService._get_default_user_id(db)
         result = await db.execute(
             select(Domain).where(
                 Domain.domain_name == domain_name,
+                Domain.user_id == user_id,
             )
         )
         if result.scalar_one_or_none():
@@ -45,6 +73,7 @@ class DomainVerificationService:
         verification_token = DomainVerificationService.generate_verification_token()
 
         domain = Domain(
+            user_id=user_id,
             domain_name=domain_name,
             verification_method=verification_method,
             verification_token=verification_token,
@@ -157,22 +186,25 @@ class DomainVerificationService:
 
     @staticmethod
     async def get_all_domains(db: AsyncSession):
+        user_id = await DomainVerificationService._get_default_user_id(db)
         result = await db.execute(
-            select(Domain).order_by(Domain.created_at.desc())
+            select(Domain).where(Domain.user_id == user_id).order_by(Domain.created_at.desc())
         )
         return result.scalars().all()
 
     @staticmethod
     async def get_domain_by_id(db: AsyncSession, domain_id: Any) -> Optional[Domain]:
+        user_id = await DomainVerificationService._get_default_user_id(db)
         result = await db.execute(
-            select(Domain).where(Domain.id == str(domain_id))
+            select(Domain).where(Domain.id == str(domain_id), Domain.user_id == user_id)
         )
         return result.scalar_one_or_none()
 
     @staticmethod
     async def delete_domain(db: AsyncSession, domain_id: Any) -> bool:
+        user_id = await DomainVerificationService._get_default_user_id(db)
         result = await db.execute(
-            select(Domain).where(Domain.id == str(domain_id))
+            select(Domain).where(Domain.id == str(domain_id), Domain.user_id == user_id)
         )
         domain = result.scalar_one_or_none()
         if not domain:

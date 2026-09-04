@@ -21,6 +21,23 @@ services:
     networks:
       - securesite-network
 
+  mongodb:
+    image: mongo:7
+    container_name: securesite-mongodb
+    environment:
+      MONGO_INITDB_DATABASE: securesite_audit
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - securesite-network
+
   redis:
     image: redis:7-alpine
     container_name: securesite-redis
@@ -42,7 +59,9 @@ services:
       dockerfile: Dockerfile
     container_name: securesite-backend
     environment:
-      DATABASE_URL: postgresql://securesite:securesite_password@db:5432/securesite_audit
+      DATABASE_URL: postgresql+asyncpg://securesite:securesite_password@db:5432/securesite_audit
+      MONGODB_URI: mongodb://mongodb:27017
+      MONGODB_DB_NAME: securesite_audit
       JWT_SECRET_KEY: your-super-secret-jwt-key-change-this-in-production
       JWT_ALGORITHM: HS256
       JWT_ACCESS_TOKEN_EXPIRE_MINUTES: 30
@@ -60,6 +79,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      mongodb:
+        condition: service_healthy
       redis:
         condition: service_healthy
     volumes:
@@ -74,7 +95,7 @@ services:
       dockerfile: Dockerfile
     container_name: securesite-frontend
     environment:
-      NEXT_PUBLIC_API_URL: http://localhost:8000/api/v1
+      NEXT_PUBLIC_API_URL: http://backend:8000/api/v1
     ports:
       - "3000:3000"
     depends_on:
@@ -88,6 +109,7 @@ services:
 
 volumes:
   postgres_data:
+  mongodb_data:
   redis_data:
 
 networks:

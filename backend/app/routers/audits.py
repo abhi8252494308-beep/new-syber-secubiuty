@@ -1,17 +1,58 @@
 import asyncio
+import threading
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 from typing import List, Optional
 from uuid import UUID
 
-from app.database import get_db
-from app.schemas.audit import AuditCreate, AuditResponse, AuditSummary
-from app.services.audit_engine import AuditEngine
-from app.models.audit import Audit, AuditResult, TLSResult, HeaderResult, CookieResult, RobotsResult, SecurityTxtResult, ServerInfoResult
-from app.models.domain import Domain
+from ..database import get_db
+from ..schemas.audit import AuditCreate, AuditResponse, AuditSummary
+from ..services.audit_engine import AuditEngine
+from ..models.audit import Audit, AuditResult, TLSResult, HeaderResult, CookieResult, RobotsResult, SecurityTxtResult, ServerInfoResult
+from ..models.domain import Domain
+from ..models.user import User
+
 
 router = APIRouter()
+
+
+async def _get_default_user_id(db: AsyncSession) -> str:
+    """Get the default user ID for no-auth mode"""
+    result = await db.execute(
+        select(User.id).where(User.email == "default@securesite-audit.local")
+    )
+    user_id = result.scalar_one_or_none()
+    if not user_id:
+        # Pre-computed bcrypt hash for "default123"
+        DEFAULT_PASSWORD_HASH = "$2b$12$Wx6iC9nsN8ifjX7DU4XfNek/qK69aod20W634VcKnwT93is9PP.bq"
+        default_user = User(
+            email="default@securesite-audit.local",
+            hashed_password=DEFAULT_PASSWORD_HASH,
+            full_name="Default User",
+            is_active=True,
+            is_verified=True,
+        )
+        db.add(default_user)
+        await db.commit()
+        await db.refresh(default_user)
+        return default_user.id
+    return user_id
+
+
+def _run_audit_background_sync(audit_id: str, domain_id: str):
+    """Synchronous wrapper to run async audit in background thread"""
+    def run_async():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(run_audit_background(audit_id, domain_id))
+        finally:
+            loop.close()
+    
+    thread = threading.Thread(target=run_async)
+    thread.start()
 
 
 async def run_audit_background(audit_id: str, domain_id: str):
@@ -66,8 +107,12 @@ async def create_audit(
             detail="Domain is not verified. Please verify the domain first.",
         )
 
+    # Get default user ID
+    user_id = await _get_default_user_id(db)
+
     # Create audit
     audit = Audit(
+        user_id=user_id,
         domain_id=str(audit_data.domain_id),
         status="pending",
     )
@@ -75,13 +120,32 @@ async def create_audit(
     await db.commit()
     await db.refresh(audit)
 
-    # Run audit in background
+    # Run audit in background (use sync wrapper for BackgroundTasks)
     background_tasks.add_task(
-        run_audit_background,
+        _run_audit_background_sync,
         str(audit.id),
         str(domain.id),
     )
 
+    # Re-query with relationships eagerly loaded to avoid lazy loading issues
+    result = await db.execute(
+        select(Audit)
+        .options(
+            selectinload(Audit.results),
+            selectinload(Audit.tls_result),
+            selectinload(Audit.header_result),
+            selectinload(Audit.cookie_results),
+            selectinload(Audit.robots_result),
+            selectinload(Audit.security_txt_result),
+            selectinload(Audit.server_info_result),
+            selectinload(Audit.sslabs_result),
+            selectinload(Audit.dns_result),
+            selectinload(Audit.cors_result),
+            selectinload(Audit.clickjacking_result),
+        )
+        .where(Audit.id == audit.id)
+    )
+    audit = result.scalar_one()
     return audit
 
 
@@ -91,9 +155,11 @@ async def list_audits(
     db: AsyncSession = Depends(get_db),
 ):
     """List all audits"""
+    user_id = await _get_default_user_id(db)
     query = (
         select(Audit, Domain.domain_name)
         .join(Domain, Audit.domain_id == Domain.id)
+        .where(Audit.user_id == user_id)
         .order_by(Audit.created_at.desc())
     )
 
@@ -123,8 +189,23 @@ async def get_audit(
     db: AsyncSession = Depends(get_db),
 ):
     """Get a specific audit with all results"""
+    user_id = await _get_default_user_id(db)
     result = await db.execute(
-        select(Audit).where(Audit.id == str(audit_id))
+        select(Audit)
+        .options(
+            selectinload(Audit.results),
+            selectinload(Audit.tls_result),
+            selectinload(Audit.header_result),
+            selectinload(Audit.cookie_results),
+            selectinload(Audit.robots_result),
+            selectinload(Audit.security_txt_result),
+            selectinload(Audit.server_info_result),
+            selectinload(Audit.sslabs_result),
+            selectinload(Audit.dns_result),
+            selectinload(Audit.cors_result),
+            selectinload(Audit.clickjacking_result),
+        )
+        .where(Audit.id == str(audit_id), Audit.user_id == user_id)
     )
     audit = result.scalar_one_or_none()
     if not audit:
@@ -132,9 +213,6 @@ async def get_audit(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Audit not found",
         )
-
-    # Load all related data
-    await db.refresh(audit, ["results", "tls_result", "header_result", "cookie_results", "robots_result", "security_txt_result", "server_info_result"])
 
     return audit
 
@@ -145,8 +223,9 @@ async def delete_audit(
     db: AsyncSession = Depends(get_db),
 ):
     """Delete an audit"""
+    user_id = await _get_default_user_id(db)
     result = await db.execute(
-        select(Audit).where(Audit.id == str(audit_id))
+        select(Audit).where(Audit.id == str(audit_id), Audit.user_id == user_id)
     )
     audit = result.scalar_one_or_none()
     if not audit:
